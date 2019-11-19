@@ -1,7 +1,15 @@
+import logging
+import queue
+import threading
+import time
+
+import cv2
+
 from PySide2.QtCore import Signal, Slot, Property, QTimer
 from PySide2.QtGui import QImage
 from PySide2.QtQuick import QQuickItem, QSGSimpleTextureNode
-import cv2
+
+logging.basicConfig(level=logging.INFO)
 
 class VideoCapture(QQuickItem):
 
@@ -20,6 +28,8 @@ class VideoCapture(QQuickItem):
 
     def onSourceChanged(self):
         self._video = self._createVideoCapture(self._source)
+        self._stop_thread()
+        self._start_thread()
 
     fpsChanged = Signal(float)
 
@@ -35,9 +45,25 @@ class VideoCapture(QQuickItem):
         self.fpsChanged.emit(self.onFpsChanged)
 
     def onFpsChanged(self):
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._capture)
-        self._timer.start(1000 / self._fps)
+        pass
+
+    def _start_thread(self):
+        self._capture_thread = threading.Thread(target=self._capture)
+        self._capture_thread.setDaemon(True)
+        self._capture_thread.start()
+        self._process_thread = threading.Thread(target=self._process)
+        self._process_thread.setDaemon(True)
+        self._process_thread.start()
+
+    def _stop_thread(self):
+        if self._capture_thread is not None:
+            self._capture_thread.do_run = False
+            self._capture_thread.join()
+            self._capture_thread = None
+        if self._process_thread is not None:
+            self._process_thread.do_run = False
+            self._process_thread.join()
+            self._process_thread = None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -48,7 +74,7 @@ class VideoCapture(QQuickItem):
         self.sourceChanged.connect(self.onSourceChanged)
         self.fpsChanged.connect(self.onFpsChanged)
 
-        self._image = QImage()
+        self._image = None
         self._texture = None
         self._x = 0
         self._y = 0
@@ -57,6 +83,10 @@ class VideoCapture(QQuickItem):
         self._fit_to_screen = False
 
         self.setFlag(QQuickItem.ItemHasContents, True)
+        self._frame_queue = queue.Queue(3)
+        self._qimage_queue = queue.Queue(3)
+        self._capture_thread = None
+        self._process_thread = None
 
     def geometryChanged(self, new_geometry, old_geometry):
         if self._image:
@@ -68,26 +98,44 @@ class VideoCapture(QQuickItem):
 
         if self._texture:
             self._texture.deleteLater()
+
+        self._image = self._qimage_queue.get()
         self._texture = self.window().createTextureFromImage(self._image)
         self._root_node.setTexture(self._texture)
-        self._root_node.setRect(self._x, self._y, self._width, self._height)
-
-        return self._root_node
-
-    def _capture(self):
-        ret, frame = self._video.read()
-        if ret == False:
-            return
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w = frame.shape[:2]
-        stride = frame.strides[0]
-        self._image = QImage(frame.data, w, h, stride, QImage.Format_RGB888)
 
         if not self._fit_to_screen:
             self._calcAspectRatio(self.window().geometry())
             self._fit_to_screen = True
 
-        self.update()
+        self._root_node.setRect(self._x, self._y, self._width, self._height)
+
+        return self._root_node
+
+    def _capture(self):
+        t = threading.currentThread()
+        while getattr(t, 'do_run', True):
+            ret, frame = self._video.read()
+            if ret == False:
+                continue
+            if self._frame_queue.full():
+                self._frame_queue.get()
+
+            self._frame_queue.put(frame)
+            time.sleep(1.0 / self._fps)
+
+    def _process(self):
+        t = threading.currentThread()
+        while getattr(t, 'do_run', True):
+            frame = self._frame_queue.get()
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w = frame.shape[:2]
+            stride = frame.strides[0]
+            image = QImage(frame.data, w, h, stride, QImage.Format_RGB888)
+            if self._qimage_queue.full():
+                self._qimage_queue.get()
+
+            self._qimage_queue.put(image)
+            self.update()
 
     def _calcAspectRatio(self, geometry):
         x, y = geometry.x(), geometry.y()
