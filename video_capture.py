@@ -47,6 +47,11 @@ class VideoCapture(QQuickItem):
     def onFpsChanged(self):
         pass
 
+    processFinished = Signal()
+
+    def onProcessFinished(self):
+        self.update()
+
     def _start_thread(self):
         self._capture_thread = threading.Thread(target=self._capture)
         self._capture_thread.setDaemon(True)
@@ -73,6 +78,7 @@ class VideoCapture(QQuickItem):
         self._root_node = None
         self.sourceChanged.connect(self.onSourceChanged)
         self.fpsChanged.connect(self.onFpsChanged)
+        self.processFinished.connect(self.onProcessFinished)
 
         self._image = None
         self._texture = None
@@ -135,7 +141,7 @@ class VideoCapture(QQuickItem):
                 self._qimage_queue.get()
 
             self._qimage_queue.put(image)
-            self.update()
+            self.processFinished.emit()
 
     def _calcAspectRatio(self, geometry):
         x, y = geometry.x(), geometry.y()
