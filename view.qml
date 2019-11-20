@@ -13,7 +13,6 @@ ApplicationWindow {
         VideoCapture {
             id: videoCapture
             source: "0"
-            fps: 30.0
             anchors.fill: parent
             anchors.centerIn: parent
         }
