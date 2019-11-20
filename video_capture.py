@@ -28,31 +28,33 @@ class VideoCapture(QQuickItem):
 
     def onSourceChanged(self):
         self._video = self._createVideoCapture(self._source)
-        self._stop_thread()
-        self._start_thread()
 
     processFinished = Signal()
 
     def onProcessFinished(self):
         self.update()
 
-    def _start_thread(self):
-        self._capture_thread = threading.Thread(target=self._capture)
-        self._capture_thread.setDaemon(True)
-        self._capture_thread.start()
-        self._process_thread = threading.Thread(target=self._process)
-        self._process_thread.setDaemon(True)
-        self._process_thread.start()
+    @Slot()
+    def start(self):
+        if self._capture_thread is None:
+            self._capture_thread = threading.Thread(target=self._capture)
+            self._capture_thread.setDaemon(True)
+            self._capture_thread.start()
+        if self._process_thread is None:
+            self._process_thread = threading.Thread(target=self._process)
+            self._process_thread.setDaemon(True)
+            self._process_thread.start()
 
-    def _stop_thread(self):
-        if self._capture_thread is not None:
-            self._capture_thread.do_run = False
-            self._capture_thread.join()
-            self._capture_thread = None
+    @Slot()
+    def stop(self):
         if self._process_thread is not None:
             self._process_thread.do_run = False
             self._process_thread.join()
             self._process_thread = None
+        if self._capture_thread is not None:
+            self._capture_thread.do_run = False
+            self._capture_thread.join()
+            self._capture_thread = None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -84,8 +86,12 @@ class VideoCapture(QQuickItem):
         if self._root_node is None:
             self._root_node = QSGSimpleTextureNode()
 
+        if self._qimage_queue.empty():
+            return old_node
+
         if self._texture:
             self._texture.deleteLater()
+            self._texture = None
 
         self._image = self._qimage_queue.get()
         self._texture = self.window().createTextureFromImage(self._image)
