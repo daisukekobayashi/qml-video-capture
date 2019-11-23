@@ -9,7 +9,7 @@ from PySide2.QtCore import Signal, Slot, Property, QTimer
 from PySide2.QtGui import QImage
 from PySide2.QtQuick import QQuickItem, QSGSimpleTextureNode
 
-logging.basicConfig(level=logging.INFO)
+#logging.basicConfig(level=logging.INFO)
 
 class VideoCapture(QQuickItem):
 
@@ -29,9 +29,9 @@ class VideoCapture(QQuickItem):
     def onSourceChanged(self):
         self._video = self._createVideoCapture(self._source)
 
-    processFinished = Signal()
+    captureFinished = Signal()
 
-    def onProcessFinished(self):
+    def onCaptureFinished(self):
         self.update()
 
     @Slot()
@@ -40,17 +40,9 @@ class VideoCapture(QQuickItem):
             self._capture_thread = threading.Thread(target=self._capture)
             self._capture_thread.setDaemon(True)
             self._capture_thread.start()
-        if self._process_thread is None:
-            self._process_thread = threading.Thread(target=self._process)
-            self._process_thread.setDaemon(True)
-            self._process_thread.start()
 
     @Slot()
     def stop(self):
-        if self._process_thread is not None:
-            self._process_thread.do_run = False
-            self._process_thread.join()
-            self._process_thread = None
         if self._capture_thread is not None:
             self._capture_thread.do_run = False
             self._capture_thread.join()
@@ -62,7 +54,7 @@ class VideoCapture(QQuickItem):
         self._video = None
         self._root_node = None
         self.sourceChanged.connect(self.onSourceChanged)
-        self.processFinished.connect(self.onProcessFinished)
+        self.captureFinished.connect(self.onCaptureFinished)
 
         self._image = None
         self._texture = None
@@ -76,29 +68,31 @@ class VideoCapture(QQuickItem):
         self._frame_queue = queue.Queue(3)
         self._qimage_queue = queue.Queue(3)
         self._capture_thread = None
-        self._process_thread = None
 
     def geometryChanged(self, new_geometry, old_geometry):
         if self._image:
-            self._calcAspectRatio(new_geometry)
+            self._calcRect(new_geometry)
 
     def updatePaintNode(self, old_node, node_data):
         if self._root_node is None:
             self._root_node = QSGSimpleTextureNode()
 
-        if self._qimage_queue.empty():
+        if self._frame_queue.empty():
             return old_node
 
         if self._texture:
             self._texture.deleteLater()
             self._texture = None
 
-        self._image = self._qimage_queue.get()
+        frame = self._frame_queue.get()
+        h, w = frame.shape[:2]
+        stride = frame.strides[0]
+        self._image = QImage(frame.data, w, h, stride, QImage.Format_RGB888)
         self._texture = self.window().createTextureFromImage(self._image)
         self._root_node.setTexture(self._texture)
 
         if not self._fit_to_screen:
-            self._calcAspectRatio(self.window().geometry())
+            self._calcRect(self.window().geometry())
             self._fit_to_screen = True
 
         self._root_node.setRect(self._x, self._y, self._width, self._height)
@@ -111,28 +105,15 @@ class VideoCapture(QQuickItem):
             ret, frame = self._video.read()
             if ret == False:
                 continue
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             if self._frame_queue.full():
                 self._frame_queue.get()
 
             self._frame_queue.put(frame)
+            self.captureFinished.emit()
             time.sleep(0.001)
 
-    def _process(self):
-        t = threading.currentThread()
-        while getattr(t, 'do_run', True):
-            frame = self._frame_queue.get()
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            h, w = frame.shape[:2]
-            stride = frame.strides[0]
-            image = QImage(frame.data, w, h, stride, QImage.Format_RGB888)
-            if self._qimage_queue.full():
-                self._qimage_queue.get()
-
-            self._qimage_queue.put(image)
-            self.processFinished.emit()
-            time.sleep(0.001)
-
-    def _calcAspectRatio(self, geometry):
+    def _calcRect(self, geometry):
         x, y = geometry.x(), geometry.y()
         width, height = geometry.width(), geometry.height()
 
