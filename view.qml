@@ -8,28 +8,32 @@ ApplicationWindow {
     width: 960
     height: 480
 
-    ColumnLayout {
+    Column {
         anchors.fill: parent
         Rectangle {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+            width: parent.width
+            height: parent.height - startButton.height - stopButton.height
             color: "black"
             VideoCapture {
                 id: videoCapture
-                source: "0"
                 anchors.fill: parent
+                source: "0"
             }
         }
         Button {
+            id: startButton
+            width: parent.width
+            height: 50
             text: "Start"
-            Layout.fillWidth: true
             onClicked: {
                 videoCapture.start()
             }
         }
         Button {
+            id: stopButton
+            width: parent.width
+            height: 50
             text: "Stop"
-            Layout.fillWidth: true
             onClicked: {
                 videoCapture.stop()
             }
