@@ -5,11 +5,41 @@ import time
 
 import cv2
 
-from PySide2.QtCore import Signal, Slot, Property, QTimer
+from PySide2.QtCore import Signal, Slot, Property, QTimer, QThread, QMutex
 from PySide2.QtGui import QImage
 from PySide2.QtQuick import QQuickItem, QSGSimpleTextureNode
 
-#logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO)
+
+class CaptureThread(QThread):
+    captureFinished = Signal()
+
+    def __init__(self, video, frame_queue, parent=None):
+        super(CaptureThread, self).__init__(parent)
+        self.mutex = QMutex()
+        self._video = video
+        self._frame_queue = frame_queue
+        self._request_stop = False
+
+    def run(self):
+        while True:
+            ret, frame = self._video.read()
+            if ret == False:
+                continue
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            self._frame_queue.put(frame)
+            self.captureFinished.emit()
+            self.mutex.lock()
+            stop = self._request_stop
+            self.mutex.unlock()
+            if stop:
+                break
+            time.sleep(0.001)
+
+    def request_stop(self):
+        self.mutex.lock()
+        self._request_stop = True
+        self.mutex.unlock()
 
 class VideoCapture(QQuickItem):
 
@@ -29,23 +59,21 @@ class VideoCapture(QQuickItem):
     def onSourceChanged(self):
         self._video = self._createVideoCapture(self._source)
 
-    captureFinished = Signal()
-
     def onCaptureFinished(self):
         self.update()
 
     @Slot()
     def start(self):
         if self._capture_thread is None:
-            self._capture_thread = threading.Thread(target=self._capture)
-            self._capture_thread.setDaemon(True)
+            self._capture_thread = CaptureThread(self._video, self._frame_queue)
+            self._capture_thread.captureFinished.connect(self.onCaptureFinished)
             self._capture_thread.start()
 
     @Slot()
     def stop(self):
         if self._capture_thread is not None:
-            self._capture_thread.do_run = False
-            self._capture_thread.join()
+            self._capture_thread.request_stop()
+            self._capture_thread.wait()
             self._capture_thread = None
 
     def __init__(self, parent=None):
@@ -54,7 +82,6 @@ class VideoCapture(QQuickItem):
         self._video = None
         self._root_node = None
         self.sourceChanged.connect(self.onSourceChanged)
-        self.captureFinished.connect(self.onCaptureFinished)
 
         self._image = None
         self._texture = None
@@ -98,20 +125,6 @@ class VideoCapture(QQuickItem):
         self._root_node.setRect(self._x, self._y, self._width, self._height)
 
         return self._root_node
-
-    def _capture(self):
-        t = threading.currentThread()
-        while getattr(t, 'do_run', True):
-            ret, frame = self._video.read()
-            if ret == False:
-                continue
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            if self._frame_queue.full():
-                self._frame_queue.get()
-
-            self._frame_queue.put(frame)
-            self.captureFinished.emit()
-            time.sleep(0.001)
 
     def _calcRect(self, geometry):
         x, y = geometry.x(), geometry.y()
